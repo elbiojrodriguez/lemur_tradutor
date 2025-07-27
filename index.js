@@ -2,11 +2,14 @@ import express from 'express';
 import multer from 'multer';
 import { SpeechClient } from '@google-cloud/speech';
 import dotenv from 'dotenv';
-import cors from 'cors';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const cors = require('cors');
+
 dotenv.config();
 
 const app = express();
-app.use(cors()); // ✅ Libera acesso de outros domínios
+app.use(cors()); // ✅ Libera acesso do frontend
 
 const upload = multer();
 
@@ -27,7 +30,7 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
 
     const [response] = await speechClient.recognize({
       config: {
-        encoding: 'WEBM_OPUS',
+        encoding: 'WEBM_OPUS', // ajuste conforme o formato do áudio
         sampleRateHertz: 48000,
         languageCode: 'pt-BR',
       },
