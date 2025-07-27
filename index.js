@@ -6,7 +6,17 @@ dotenv.config();
 
 const app = express();
 const upload = multer();
-const speechClient = new SpeechClient();
+
+// 🔐 Carrega credenciais da variável de ambiente
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+
+const speechClient = new SpeechClient({
+  credentials: {
+    client_email: credentials.client_email,
+    private_key: credentials.private_key,
+  },
+  projectId: credentials.project_id,
+});
 
 app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
@@ -14,7 +24,7 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
 
     const [response] = await speechClient.recognize({
       config: {
-        encoding: 'WEBM_OPUS',
+        encoding: 'WEBM_OPUS', // ajuste conforme o formato do áudio
         sampleRateHertz: 48000,
         languageCode: 'pt-BR',
       },
@@ -29,11 +39,12 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
 
     res.json({ text: transcription });
   } catch (err) {
-    console.error(err);
+    console.error('Erro na transcrição:', err);
     res.status(500).json({ error: 'Erro na transcrição' });
   }
 });
 
-app.listen(3000, () => {
-  console.log('Servidor rodando na porta 3000');
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
