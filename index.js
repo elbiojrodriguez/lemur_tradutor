@@ -25,6 +25,18 @@ app.get('/', (req, res) => {
   });
 });
 
+// Health Check aprimorado (coloque ANTES do app.listen)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    timestamp: Date.now(),
+    checks: {
+      memory: process.memoryUsage().rss,
+      uptime: process.uptime()
+    }
+  });
+});
+
 // Configuração do Google Speech
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 const speechClient = new SpeechClient({
