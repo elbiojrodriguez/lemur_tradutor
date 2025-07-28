@@ -22,8 +22,8 @@ const speechClient = new SpeechClient({
   projectId: credentials.project_id,
 });
 
-// Servidor HTTP + WebSocket
-const server = app.listen(process.env.PORT || 10000, () => {
+// Servidor HTTP + WebSocket (usando porta 8080 do Railway)
+const server = app.listen(process.env.PORT || 8080, () => {
   console.log(`Servidor rodando na porta ${server.address().port}`);
 });
 
@@ -58,7 +58,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Rota POST original (opcional)
+// Rota POST original
 const upload = multer();
 app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
