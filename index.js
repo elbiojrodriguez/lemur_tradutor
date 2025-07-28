@@ -8,36 +8,16 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const cors = require('cors');
 
-// Configurações iniciais
+// Basic configuration
 dotenv.config();
 const app = express();
 app.use(cors());
 
-// Health Check obrigatório para o Railway
-app.get('/', (req, res) => {
-  res.status(200).json({
-    status: 'online',
-    services: {
-      http: true,
-      websocket: true,
-      google_api: true
-    }
-  });
-});
+// Minimal health check endpoints
+app.get('/', (req, res) => res.send('Server is running'));
+app.get('/health', (req, res) => res.sendStatus(200));
 
-// Health Check aprimorado (coloque ANTES do app.listen)
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'online',
-    timestamp: Date.now(),
-    checks: {
-      memory: process.memoryUsage().rss,
-      uptime: process.uptime()
-    }
-  });
-});
-
-// Configuração do Google Speech
+// Google Speech configuration
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 const speechClient = new SpeechClient({
   credentials: {
@@ -47,27 +27,16 @@ const speechClient = new SpeechClient({
   projectId: credentials.project_id,
 });
 
-// Inicialização do servidor
+// Server initialization
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Servidor HTTP/WebSocket rodando na porta ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
 
-// Configuração robusta do WebSocket
-const wss = new WebSocketServer({
-  server,
-  clientTracking: true,
-  perMessageDeflate: {
-    zlibDeflateOptions: {
-      chunkSize: 1024,
-      memLevel: 7,
-      level: 3
-    },
-    threshold: 1024
-  }
-});
+// WebSocket setup
+const wss = new WebSocketServer({ server });
 
-// Heartbeat para manter conexão ativa
+// WebSocket connection maintenance
 setInterval(() => {
   wss.clients.forEach((client) => {
     if (client.readyState === client.OPEN) {
@@ -76,9 +45,9 @@ setInterval(() => {
   });
 }, 30000);
 
-// Lógica do WebSocket
+// WebSocket message handling
 wss.on('connection', (ws) => {
-  console.log('🔌 Nova conexão WebSocket estabelecida');
+  console.log('New WebSocket connection');
 
   ws.on('message', async (message) => {
     try {
@@ -100,30 +69,28 @@ wss.on('connection', (ws) => {
 
       ws.send(JSON.stringify({
         status: 'success',
-        text: transcription,
-        timestamp: new Date().toISOString()
+        text: transcription
       }));
     } catch (error) {
-      console.error('Erro na transcrição:', error);
+      console.error('Transcription error:', error);
       ws.send(JSON.stringify({
         status: 'error',
-        message: 'Erro no processamento do áudio',
-        details: error.message
+        message: 'Audio processing failed'
       }));
     }
   });
 
   ws.on('close', () => {
-    console.log('🔌 Conexão WebSocket encerrada');
+    console.log('WebSocket connection closed');
   });
 });
 
-// Rota POST alternativa
+// Audio file transcription endpoint
 const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+      return res.status(400).json({ error: 'No audio file received' });
     }
 
     const [response] = await speechClient.recognize({
@@ -149,16 +116,16 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
   }
 });
 
-// Prevenção de encerramento abrupto
+// Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('⚠️ Recebido SIGTERM, encerrando graciosamente...');
+  console.log('Shutting down server...');
   server.close(() => {
-    console.log('🛑 Servidor encerrado');
+    console.log('Server terminated');
     process.exit(0);
   });
 });
 
-// Keep-alive para o Railway
+// Server keep-alive
 setInterval(() => {
-  console.log('🫀 Heartbeat: Servidor ativo');
+  console.log('Server heartbeat');
 }, 60000);
