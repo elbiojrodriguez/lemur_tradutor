@@ -12,6 +12,11 @@ dotenv.config();
 const app = express();
 app.use(cors());
 
+// Rota raiz obrigatória para o Railway
+app.get('/', (req, res) => {
+  res.status(200).send('Servidor de transcrição e WebSocket online');
+});
+
 // Configuração do Google Speech-to-Text
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 const speechClient = new SpeechClient({
@@ -22,19 +27,25 @@ const speechClient = new SpeechClient({
   projectId: credentials.project_id,
 });
 
-// Servidor HTTP + WebSocket (usando porta 8080 do Railway)
+// Servidor HTTP + WebSocket
 const server = app.listen(process.env.PORT || 8080, () => {
-  console.log(`Servidor rodando na porta ${server.address().port}`);
+  console.log(`✅ Servidor rodando na porta ${server.address().port}`);
 });
 
-// WebSocket Server
-const wss = new WebSocketServer({ server });
+// Configuração do WebSocket
+const wss = new WebSocketServer({ 
+  server,
+  perMessageDeflate: false // Otimização para Railway
+});
 
 wss.on('connection', (ws) => {
   console.log('✅ Novo cliente WebSocket conectado!');
   
   ws.on('message', async (audioData) => {
     try {
+      // Verifica se o dado é um Buffer
+      const audioBuffer = Buffer.isBuffer(audioData) ? audioData : Buffer.from(audioData);
+      
       const [response] = await speechClient.recognize({
         config: {
           encoding: 'WEBM_OPUS',
@@ -42,7 +53,7 @@ wss.on('connection', (ws) => {
           languageCode: 'pt-BR',
         },
         audio: {
-          content: audioData.toString('base64'),
+          content: audioBuffer.toString('base64'),
         },
       });
 
@@ -50,19 +61,33 @@ wss.on('connection', (ws) => {
         .map(result => result.alternatives[0].transcript)
         .join('\n');
 
-      ws.send(JSON.stringify({ text: transcription }));
+      ws.send(JSON.stringify({ 
+        status: 'success',
+        text: transcription 
+      }));
     } catch (err) {
-      console.error('Erro na transcrição:', err);
-      ws.send(JSON.stringify({ error: 'Erro na transcrição' }));
+      console.error('❌ Erro na transcrição:', err);
+      ws.send(JSON.stringify({ 
+        status: 'error',
+        message: 'Falha na transcrição do áudio'
+      }));
     }
+  });
+
+  ws.on('close', () => {
+    console.log('⚠️ Cliente WebSocket desconectado');
   });
 });
 
-// Rota POST original
+// Rota POST para compatibilidade
 const upload = multer();
 app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
-    const audioBytes = req.file.buffer.toString('base64');
+    if (!req.file) {
+      return res.status(400).json({ error: 'Nenhum arquivo de áudio enviado' });
+    }
+
+    const audioBuffer = req.file.buffer;
     const [response] = await speechClient.recognize({
       config: {
         encoding: 'WEBM_OPUS',
@@ -70,7 +95,7 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
         languageCode: 'pt-BR',
       },
       audio: {
-        content: audioBytes,
+        content: audioBuffer.toString('base64'),
       },
     });
 
@@ -78,9 +103,20 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
       .map(result => result.alternatives[0].transcript)
       .join('\n');
 
-    res.json({ text: transcription });
+    res.json({ 
+      status: 'success',
+      text: transcription 
+    });
   } catch (err) {
-    console.error('Erro na transcrição:', err);
-    res.status(500).json({ error: 'Erro na transcrição' });
+    console.error('❌ Erro na transcrição:', err);
+    res.status(500).json({ 
+      status: 'error',
+      error: 'Erro no processamento do áudio' 
+    });
   }
+});
+
+// Tratamento de erros global
+process.on('unhandledRejection', (err) => {
+  console.error('❌ Erro não tratado:', err);
 });
