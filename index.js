@@ -4,20 +4,28 @@ import multer from 'multer';
 import { SpeechClient } from '@google-cloud/speech';
 import dotenv from 'dotenv';
 import { createRequire } from 'module';
+
 const require = createRequire(import.meta.url);
 const cors = require('cors');
 
+// Configurações iniciais
 dotenv.config();
-
 const app = express();
 app.use(cors());
 
-// Rota raiz obrigatória para o Railway
+// Health Check obrigatório para o Railway
 app.get('/', (req, res) => {
-  res.status(200).send('Servidor de transcrição e WebSocket online');
+  res.status(200).json({
+    status: 'online',
+    services: {
+      http: true,
+      websocket: true,
+      google_api: true
+    }
+  });
 });
 
-// Configuração do Google Speech-to-Text
+// Configuração do Google Speech
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
 const speechClient = new SpeechClient({
   credentials: {
@@ -27,25 +35,42 @@ const speechClient = new SpeechClient({
   projectId: credentials.project_id,
 });
 
-// Servidor HTTP + WebSocket
-const server = app.listen(process.env.PORT || 8080, () => {
-  console.log(`✅ Servidor rodando na porta ${server.address().port}`);
+// Inicialização do servidor
+const PORT = process.env.PORT || 8080;
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Servidor HTTP/WebSocket rodando na porta ${PORT}`);
 });
 
-// Configuração do WebSocket
-const wss = new WebSocketServer({ 
+// Configuração robusta do WebSocket
+const wss = new WebSocketServer({
   server,
-  perMessageDeflate: false // Otimização para Railway
+  clientTracking: true,
+  perMessageDeflate: {
+    zlibDeflateOptions: {
+      chunkSize: 1024,
+      memLevel: 7,
+      level: 3
+    },
+    threshold: 1024
+  }
 });
 
+// Heartbeat para manter conexão ativa
+setInterval(() => {
+  wss.clients.forEach((client) => {
+    if (client.readyState === client.OPEN) {
+      client.ping();
+    }
+  });
+}, 30000);
+
+// Lógica do WebSocket
 wss.on('connection', (ws) => {
-  console.log('✅ Novo cliente WebSocket conectado!');
-  
-  ws.on('message', async (audioData) => {
+  console.log('🔌 Nova conexão WebSocket estabelecida');
+
+  ws.on('message', async (message) => {
     try {
-      // Verifica se o dado é um Buffer
-      const audioBuffer = Buffer.isBuffer(audioData) ? audioData : Buffer.from(audioData);
-      
+      const audioBuffer = Buffer.isBuffer(message) ? message : Buffer.from(message);
       const [response] = await speechClient.recognize({
         config: {
           encoding: 'WEBM_OPUS',
@@ -61,33 +86,34 @@ wss.on('connection', (ws) => {
         .map(result => result.alternatives[0].transcript)
         .join('\n');
 
-      ws.send(JSON.stringify({ 
+      ws.send(JSON.stringify({
         status: 'success',
-        text: transcription 
+        text: transcription,
+        timestamp: new Date().toISOString()
       }));
-    } catch (err) {
-      console.error('❌ Erro na transcrição:', err);
-      ws.send(JSON.stringify({ 
+    } catch (error) {
+      console.error('Erro na transcrição:', error);
+      ws.send(JSON.stringify({
         status: 'error',
-        message: 'Falha na transcrição do áudio'
+        message: 'Erro no processamento do áudio',
+        details: error.message
       }));
     }
   });
 
   ws.on('close', () => {
-    console.log('⚠️ Cliente WebSocket desconectado');
+    console.log('🔌 Conexão WebSocket encerrada');
   });
 });
 
-// Rota POST para compatibilidade
-const upload = multer();
+// Rota POST alternativa
+const upload = multer({ limits: { fileSize: 10 * 1024 * 1024 } });
 app.post('/transcribe', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'Nenhum arquivo de áudio enviado' });
+      return res.status(400).json({ error: 'Nenhum arquivo enviado' });
     }
 
-    const audioBuffer = req.file.buffer;
     const [response] = await speechClient.recognize({
       config: {
         encoding: 'WEBM_OPUS',
@@ -95,28 +121,32 @@ app.post('/transcribe', upload.single('audio'), async (req, res) => {
         languageCode: 'pt-BR',
       },
       audio: {
-        content: audioBuffer.toString('base64'),
+        content: req.file.buffer.toString('base64'),
       },
     });
 
-    const transcription = response.results
-      .map(result => result.alternatives[0].transcript)
-      .join('\n');
-
-    res.json({ 
+    res.json({
       status: 'success',
-      text: transcription 
+      text: response.results.map(r => r.alternatives[0].transcript).join('\n')
     });
-  } catch (err) {
-    console.error('❌ Erro na transcrição:', err);
-    res.status(500).json({ 
+  } catch (error) {
+    res.status(500).json({
       status: 'error',
-      error: 'Erro no processamento do áudio' 
+      error: error.message
     });
   }
 });
 
-// Tratamento de erros global
-process.on('unhandledRejection', (err) => {
-  console.error('❌ Erro não tratado:', err);
+// Prevenção de encerramento abrupto
+process.on('SIGTERM', () => {
+  console.log('⚠️ Recebido SIGTERM, encerrando graciosamente...');
+  server.close(() => {
+    console.log('🛑 Servidor encerrado');
+    process.exit(0);
+  });
 });
+
+// Keep-alive para o Railway
+setInterval(() => {
+  console.log('🫀 Heartbeat: Servidor ativo');
+}, 60000);
